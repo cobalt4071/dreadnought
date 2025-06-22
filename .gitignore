@@ -1,1 +1,10 @@
-/target
+# Rust
+/target/
+/Cargo.lock
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Editor-specific (Helix usually keeps its config in project root for local settings)
+.helix/
