@@ -37,6 +37,13 @@ struct Target {
     track_history: VecDeque<Point2<f32>>,
 }
 
+enum AppView {
+    Map,
+    BearingGraph,
+    Info,
+    Controls,
+}
+
 //=============================================================================
 // III. High-Level Implementation Steps (Functions)
 //=============================================================================
@@ -90,72 +97,98 @@ fn handle_input(own_ship: &mut OwnShip) {
 // IV. Visual Display (Four Panels)
 //=============================================================================
 
-/// Panel 1: 2D Map View (Top-Left)
+/// Panel 1: 2D Map View
 fn draw_map_view(panel: Rect, own_ship: &OwnShip, targets: &Vec<Target>) {
-    // Set a camera for this panel to easily manage coordinates
+    let world_view_size = 20000.0; // Visible area in meters (20km)
+
     set_camera(&Camera2D {
-        zoom: vec2(1.0 / panel.w, 1.0 / panel.h),
-        target: vec2(panel.w/2.0, panel.h/2.0),
+        zoom: vec2(1.0 / world_view_size, -1.0 / world_view_size),
+        target: vec2(own_ship.position_m.x, own_ship.position_m.y),
         ..Default::default()
     });
 
-    // Draw panel background and border
-    draw_rectangle(panel.x, panel.y, panel.w, panel.h, Color::new(0.0, 0.1, 0.1, 1.0));
-    draw_rectangle_lines(panel.x, panel.y, panel.w, panel.h, 3.0, WHITE);
-    
-    let world_scale = 0.03; // Adjusted scale for smaller panel
-    let center_panel = vec2(panel.w / 2.0, panel.h / 2.0);
+    // Draw background
+    draw_rectangle(
+        own_ship.position_m.x - world_view_size / 2.0,
+        own_ship.position_m.y - world_view_size / 2.0,
+        world_view_size,
+        world_view_size,
+        Color::new(0.0, 0.1, 0.1, 1.0),
+    );
 
-    // Draw Own Ship at the center of the panel
+    // Draw a grid
+    let grid_spacing = 1000.0; // 1km
+    let grid_lines = (world_view_size / grid_spacing) as i32;
+    let grid_color = Color::new(0.0, 0.2, 0.2, 1.0);
+    let center_x = (own_ship.position_m.x / grid_spacing).floor() as i32;
+    let center_y = (own_ship.position_m.y / grid_spacing).floor() as i32;
+
+    for i in (center_x - grid_lines)..(center_x + grid_lines) {
+        let x = i as f32 * grid_spacing;
+        draw_line(x, own_ship.position_m.y - world_view_size, x, own_ship.position_m.y + world_view_size, 20.0, grid_color);
+    }
+    for i in (center_y - grid_lines)..(center_y + grid_lines) {
+        let y = i as f32 * grid_spacing;
+        draw_line(own_ship.position_m.x - world_view_size, y, own_ship.position_m.x + world_view_size, y, 20.0, grid_color);
+    }
+
+    // Draw Own Ship
+    let ship_size = 500.0; // 500 meters long
+    let heading_rad = own_ship.heading_deg.to_radians();
+    let rot = nalgebra::Rotation2::new(heading_rad);
+
+    let v1 = rot * nalgebra::Vector2::new(0.0, -ship_size);
+    let v2 = rot * nalgebra::Vector2::new(-ship_size/2.0, ship_size/2.0);
+    let v3 = rot * nalgebra::Vector2::new(ship_size/2.0, ship_size/2.0);
+
+    let p1 = own_ship.position_m + v1;
+    let p2 = own_ship.position_m + v2;
+    let p3 = own_ship.position_m + v3;
+
     draw_triangle(
-        center_panel + Vec2::new(0.0, -15.0).rotate(Vec2::from_angle(own_ship.heading_deg.to_radians())),
-        center_panel + Vec2::new(-10.0, 10.0).rotate(Vec2::from_angle(own_ship.heading_deg.to_radians())),
-        center_panel + Vec2::new(10.0, 10.0).rotate(Vec2::from_angle(own_ship.heading_deg.to_radians())),
+        vec2(p1.x, p1.y),
+        vec2(p2.x, p2.y),
+        vec2(p3.x, p3.y),
         GREEN,
     );
 
     // Draw Targets
     for target in targets {
-        let relative_pos = target.position_m - own_ship.position_m;
-        let target_screen_pos = center_panel + vec2(relative_pos.x, relative_pos.y) * world_scale;
-        
-        // Draw Track History
         if target.track_history.len() > 1 {
             for i in 0..target.track_history.len() - 1 {
-                let p1 = target.track_history[i];
-                let p2 = target.track_history[i+1];
-                let v1 = p1 - own_ship.position_m;
-                let v2 = p2 - own_ship.position_m;
                 draw_line(
-                    center_panel.x + v1.x * world_scale, center_panel.y + v1.y * world_scale,
-                    center_panel.x + v2.x * world_scale, center_panel.y + v2.y * world_scale,
-                    1.0, RED
+                    target.track_history[i].x, target.track_history[i].y,
+                    target.track_history[i+1].x, target.track_history[i+1].y,
+                    40.0, RED
                 );
             }
         }
-        draw_circle(target_screen_pos.x, target_screen_pos.y, 8.0, RED);
+        draw_circle(target.position_m.x, target.position_m.y, 250.0, RED); // 250m radius
     }
-    set_default_camera(); // Reset camera
+
+    set_default_camera();
+    // Draw the UI text over the map
+    draw_text("View: Map (1/4) - Use keys 1-4 to switch", 10.0, 30.0, 30.0, WHITE);
 }
 
 
-/// Panel 2: Bearing Rate Graph (Top-Right)
+/// Panel 2: Bearing Rate Graph
 fn draw_bearing_rate_graph(panel: Rect, own_ship: &OwnShip, sim: &Simulation) {
     draw_rectangle(panel.x, panel.y, panel.w, panel.h, Color::new(0.0, 0.0, 0.1, 1.0));
     draw_rectangle_lines(panel.x, panel.y, panel.w, panel.h, 3.0, WHITE);
+    draw_text("View: Bearing Rate Graph (2/4) - Use keys 1-4 to switch", panel.x + 10.0, panel.y + 30.0, 30.0, WHITE);
+
 
     let font_size = 20.0;
     let padding = 5.0;
 
-    // Y-Axis (Bearing)
     draw_text("360", panel.x + padding, panel.y + font_size, font_size, LIGHTGRAY);
     draw_text("180", panel.x + padding, panel.y + panel.h / 2.0, font_size, LIGHTGRAY);
     draw_text("000", panel.x + padding, panel.y + panel.h - padding, font_size, LIGHTGRAY);
 
-    // X-Axis (Time)
-    draw_text("Now", panel.x + panel.w - 40.0, panel.y + panel.h + 20.0, font_size, LIGHTGRAY);
+    draw_text("Now", panel.x + panel.w - 40.0, panel.y + panel.h - padding, font_size, LIGHTGRAY);
     let time_label = format!("-{}s", sim.time_bearing_graph_history_s as i32);
-    draw_text(&time_label, panel.x, panel.y + panel.h + 20.0, font_size, LIGHTGRAY);
+    draw_text(&time_label, panel.x, panel.y + panel.h - padding, font_size, LIGHTGRAY);
     
     let now_x = panel.x + panel.w;
     draw_line(now_x, panel.y, now_x, panel.y + panel.h, 2.0, YELLOW);
@@ -176,7 +209,6 @@ fn draw_bearing_rate_graph(panel: Rect, own_ship: &OwnShip, sim: &Simulation) {
             let y2 = panel.y + panel.h * (1.0 - r2.relative_bearing_deg / 360.0);
 
             if (r1.relative_bearing_deg - r2.relative_bearing_deg).abs() > 300.0 {
-                // Handle wrap-around drawing
                 let (y_start_wrap, y_end_wrap) = if r1.relative_bearing_deg > r2.relative_bearing_deg {
                     (panel.y + panel.h, panel.y)
                 } else {
@@ -192,17 +224,19 @@ fn draw_bearing_rate_graph(panel: Rect, own_ship: &OwnShip, sim: &Simulation) {
 }
 
 
-/// Panel 3: Numerical Info (Bottom-Left)
+/// Panel 3: Numerical Info
 fn draw_info_panel(panel: Rect, own_ship: &OwnShip, true_bearing: f32, relative_bearing: f32) {
     draw_rectangle(panel.x, panel.y, panel.w, panel.h, Color::new(0.1, 0.1, 0.0, 1.0));
     draw_rectangle_lines(panel.x, panel.y, panel.w, panel.h, 3.0, WHITE);
+    draw_text("View: Telemetry (3/4) - Use keys 1-4 to switch", panel.x + 10.0, panel.y + 30.0, 30.0, WHITE);
+
 
     let font_size = 24.0;
     let start_x = panel.x + 20.0;
-    let start_y = panel.y + 40.0;
+    let start_y = panel.y + 80.0;
     let line_height = 30.0;
 
-    draw_text("TELEMETRY", start_x, panel.y + 25.0, 22.0, YELLOW);
+    draw_text("TELEMETRY", start_x, panel.y + 45.0, 22.0, YELLOW);
     
     draw_text(&format!("Own Ship Heading: {:.1}°", own_ship.heading_deg), start_x, start_y, font_size, WHITE);
     draw_text(&format!("Own Ship Speed:   {:.1} kts", own_ship.speed_knots), start_x, start_y + line_height, font_size, WHITE);
@@ -210,17 +244,19 @@ fn draw_info_panel(panel: Rect, own_ship: &OwnShip, true_bearing: f32, relative_
     draw_text(&format!("Target Rel. Bearing: {:.1}°", relative_bearing), start_x, start_y + line_height * 3.5, font_size, GREEN);
 }
 
-/// Panel 4: Controls Help (Bottom-Right)
+/// Panel 4: Controls Help
 fn draw_controls_panel(panel: Rect) {
     draw_rectangle(panel.x, panel.y, panel.w, panel.h, Color::new(0.1, 0.0, 0.1, 1.0));
     draw_rectangle_lines(panel.x, panel.y, panel.w, panel.h, 3.0, WHITE);
+    draw_text("View: Controls (4/4) - Use keys 1-4 to switch", panel.x + 10.0, panel.y + 30.0, 30.0, WHITE);
+
 
     let font_size = 24.0;
     let start_x = panel.x + 20.0;
-    let start_y = panel.y + 40.0;
+    let start_y = panel.y + 80.0;
     let line_height = 30.0;
 
-    draw_text("CONTROLS", start_x, panel.y + 25.0, 22.0, YELLOW);
+    draw_text("CONTROLS", start_x, panel.y + 45.0, 22.0, YELLOW);
 
     draw_text("Turn Left:", start_x, start_y, font_size, WHITE);
     draw_text("LEFT ARROW", start_x + 200.0, start_y, font_size, LIGHTGRAY);
@@ -236,7 +272,7 @@ fn draw_controls_panel(panel: Rect) {
 }
 
 
-#[macroquad::main("4-Panel Submarine Bearing Graph")]
+#[macroquad::main("Submarine Bearing Analyser")]
 async fn main() {
     let mut sim = Simulation {
         current_sim_time_s: 0.0,
@@ -265,6 +301,8 @@ async fn main() {
     let mut time_accumulator: f32 = 0.0;
     let mut last_true_bearing = 0.0;
     let mut last_relative_bearing = 0.0;
+    
+    let mut current_view = AppView::Map;
 
     loop {
         clear_background(BLACK);
@@ -273,6 +311,11 @@ async fn main() {
         time_accumulator += dt;
 
         handle_input(&mut own_ship);
+
+        if is_key_pressed(KeyCode::Key1) { current_view = AppView::Map; }
+        if is_key_pressed(KeyCode::Key2) { current_view = AppView::BearingGraph; }
+        if is_key_pressed(KeyCode::Key3) { current_view = AppView::Info; }
+        if is_key_pressed(KeyCode::Key4) { current_view = AppView::Controls; }
 
         if time_accumulator >= sim.time_step_s {
             time_accumulator -= sim.time_step_s;
@@ -307,22 +350,14 @@ async fn main() {
             }
         }
         
-        // --- Define the 4-panel layout ---
-        let screen_w = screen_width();
-        let screen_h = screen_height();
-        let half_w = screen_w / 2.0;
-        let half_h = screen_h / 2.0;
+        let screen_rect = Rect::new(0.0, 0.0, screen_width(), screen_height());
 
-        let map_panel = Rect::new(0.0, 0.0, half_w, half_h);
-        let graph_panel = Rect::new(half_w, 0.0, half_w, half_h);
-        let info_panel = Rect::new(0.0, half_h, half_w, half_h);
-        let controls_panel = Rect::new(half_w, half_h, half_w, half_h);
-        
-        // --- Draw the four panels ---
-        draw_map_view(map_panel, &own_ship, &targets);
-        draw_bearing_rate_graph(graph_panel, &own_ship, &sim);
-        draw_info_panel(info_panel, &own_ship, last_true_bearing, last_relative_bearing);
-        draw_controls_panel(controls_panel);
+        match current_view {
+            AppView::Map => draw_map_view(screen_rect, &own_ship, &targets),
+            AppView::BearingGraph => draw_bearing_rate_graph(screen_rect, &own_ship, &sim),
+            AppView::Info => draw_info_panel(screen_rect, &own_ship, last_true_bearing, last_relative_bearing),
+            AppView::Controls => draw_controls_panel(screen_rect),
+        }
 
         next_frame().await
     }
